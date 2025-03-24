@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Microsoft.Maui.Controls;
@@ -117,7 +118,7 @@ namespace Microsoft.Maui.DeviceTests
 				{
 					Header = new Label { Text = "Header" },
 					Footer = new Label { Text = "Footer" },
-					ItemTemplate = new DataTemplate(() => 
+					ItemTemplate = new DataTemplate(() =>
 					{
 						var label = new Label();
 						labels.Add(label);
@@ -160,12 +161,71 @@ namespace Microsoft.Maui.DeviceTests
 					await navPage.PopAsync();
 				});
 
-				
+
 				Assert.NotNull(logicalChildren);
 				Assert.True(logicalChildren.Count <= 5, "_logicalChildren should not grow in size!");
 			}
 
 			await AssertionExtensions.WaitForGC([.. weakReferences]);
+		}
+
+		[Fact(
+#if IOS || MACCATALYST || WINDOWS
+Skip = "Fails: https://github.com/dotnet/maui/issues/17664"
+#endif
+)]
+		public async Task CollectionScrollToUngroupedWorks()
+		{
+			SetupBuilder();
+
+			var dataList = new List<TestData>();
+			string letters = "abcdefghijklmnopqrstuvwxyz";
+			for (int i = 0; i < letters.Length; i++)
+			{
+				dataList.Add(new TestData
+				{
+					Name = $"{letters[i]}"
+				});
+			}
+
+			var collectionView = new CollectionView
+			{
+				IsGrouped = false,
+				ItemsSource = dataList,
+				ItemTemplate = new DataTemplate(() =>
+				{
+					var name = new Label()
+					{
+						TextColor = Colors.Grey,
+						HeightRequest = 64
+					};
+					name.SetBinding(Label.TextProperty, "Name");
+					return name;
+				})
+			};
+
+			await CreateHandlerAndAddToWindow<CollectionViewHandler>(collectionView, async handler =>
+			{
+				collectionView.ScrollTo(index: 24, animate: false); // Item "x"
+
+				int retryCount = 3;
+				bool foundItem = false;
+				while (retryCount > 0 && !foundItem)
+				{
+					retryCount--;
+					await Task.Delay(500);
+					for (int i = 0; i < collectionView.LogicalChildrenInternal.Count; i++)
+					{
+						var item = collectionView.LogicalChildrenInternal[i];
+						if (item is Label label && label.Text.Equals("x", StringComparison.OrdinalIgnoreCase))
+						{
+							foundItem = true;
+							break;
+						}
+					}
+				}
+				Assert.True(foundItem);
+			});
 		}
 
 		[Fact(
@@ -202,7 +262,7 @@ Skip = "Fails on iOS/macOS: https://github.com/dotnet/maui/issues/17664"
 			{
 				IsGrouped = true,
 				ItemsSource = grouped.ToList(),
-				ItemTemplate = new DataTemplate(() => 
+				ItemTemplate = new DataTemplate(() =>
 				{
 					var name = new Label()
 					{
@@ -224,23 +284,30 @@ Skip = "Fails on iOS/macOS: https://github.com/dotnet/maui/issues/17664"
 				})
 			};
 
-			var desiredItemIndex = 134; // 13th group (letter: N), 4th item
-			var firstVisibleItemIndex = -1;
-			var lastVisibleItemIndex = -1;
-			collectionView.Scrolled += (s, e) =>
-			{
-				firstVisibleItemIndex = e.FirstVisibleItemIndex;
-				lastVisibleItemIndex = e.LastVisibleItemIndex;
-			};
-
 			await CreateHandlerAndAddToWindow<CollectionViewHandler>(collectionView, async handler =>
 			{
 				collectionView.ScrollTo(index: 4, groupIndex: 13, animate: false); // Item "N_4"
 
-				await Task.Delay(500);
+				int retryCount = 3;
+				bool foundItem = false;
 
-				Assert.True(desiredItemIndex >= firstVisibleItemIndex &&
-							desiredItemIndex <= lastVisibleItemIndex);
+				while (retryCount > 0 && !foundItem)
+				{
+					retryCount--;
+					await Task.Delay(500);
+
+					for (int i = 0; i < collectionView.LogicalChildrenInternal.Count; i++)
+					{
+						var item = collectionView.LogicalChildrenInternal[i];
+						if (item is Label label && label.Text.Equals("n_4", StringComparison.OrdinalIgnoreCase))
+						{
+							foundItem = true;
+							break;
+						}
+					}
+				}
+
+				Assert.True(foundItem);
 			});
 		}
 
@@ -309,8 +376,13 @@ Skip = "Fails on iOS/macOS: https://github.com/dotnet/maui/issues/17664"
 
 			var frame = collectionView.Frame;
 
+			var measureInvalidatedCount = 0;
+			void OnCollectionViewOnMeasureInvalidated(object s, EventArgs e) => Interlocked.Increment(ref measureInvalidatedCount);
+
 			await CreateHandlerAndAddToWindow<LayoutHandler>(layout, async handler =>
 			{
+				collectionView.MeasureInvalidated += OnCollectionViewOnMeasureInvalidated;
+
 				for (int n = 0; n < itemCounts.Length; n++)
 				{
 					int itemsCount = itemCounts[n];
@@ -336,6 +408,13 @@ Skip = "Fails on iOS/macOS: https://github.com/dotnet/maui/issues/17664"
 					double expectedHeight = layoutOptions == LayoutOptions.Fill
 						? containerHeight
 						: Math.Min(itemsCount * templateHeight, containerHeight);
+
+#if IOS
+					if (layoutOptions != LayoutOptions.Fill)
+					{
+						Assert.Equal(n + 1, measureInvalidatedCount);
+					}
+#endif
 
 					if (itemsLayout.Orientation == ItemsLayoutOrientation.Horizontal)
 					{
@@ -408,8 +487,8 @@ Skip = "Fails on iOS/macOS: https://github.com/dotnet/maui/issues/17664"
 				}
 			});
 		}
-    
-    
+
+
 		[Fact(
 #if IOS || MACCATALYST
 		Skip = "Fails on iOS/macOS: https://github.com/dotnet/maui/issues/18517"
@@ -611,7 +690,7 @@ Skip = "Fails on iOS/macOS: https://github.com/dotnet/maui/issues/17664"
 
 			var vsl = new VerticalStackLayout()
 			{
-				collectionView				
+				collectionView
 			};
 
 			vsl.HeightRequest = 500;

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.Controls;
@@ -36,8 +37,11 @@ public class MemoryTests : ControlsHandlerTestBase
 				handlers.AddHandler<Entry, EntryHandler>();
 				handlers.AddHandler<EntryCell, EntryCellRenderer>();
 				handlers.AddHandler<Editor, EditorHandler>();
+#pragma warning disable CS0618 // Type or member is obsolete
 				handlers.AddHandler<Frame, FrameRenderer>();
+#pragma warning restore CS0618 // Type or member is obsolete
 				handlers.AddHandler<GraphicsView, GraphicsViewHandler>();
+				handlers.AddHandler<HybridWebView, HybridWebViewHandler>();
 				handlers.AddHandler<Label, LabelHandler>();
 				handlers.AddHandler<ListView, ListViewRenderer>();
 				handlers.AddHandler<Layout, LayoutHandler>();
@@ -104,7 +108,7 @@ public class MemoryTests : ControlsHandlerTestBase
 				pageToWaitFor = new ContentPage { Content = new Label() };
 				tabbedPage.Children.Add(pageToWaitFor);
 			}
-			
+
 			await navPage.Navigation.PushModalAsync(page);
 
 			references.Add(new(page));
@@ -132,13 +136,16 @@ public class MemoryTests : ControlsHandlerTestBase
 	[InlineData(typeof(CarouselView))]
 	[InlineData(typeof(ContentView))]
 	[InlineData(typeof(CheckBox))]
-	[InlineData(typeof(DatePicker))]
+	// [InlineData(typeof(DatePicker))] - This test was moved to MemoryTests.cs inside Appium
 	[InlineData(typeof(Ellipse))]
 	[InlineData(typeof(Entry))]
 	[InlineData(typeof(Editor))]
+#pragma warning disable CS0618 // Type or member is obsolete
 	[InlineData(typeof(Frame))]
+#pragma warning restore CS0618 // Type or member is obsolete
 	[InlineData(typeof(GraphicsView))]
 	[InlineData(typeof(Grid))]
+	[InlineData(typeof(HybridWebView))]
 	[InlineData(typeof(Image))]
 	[InlineData(typeof(ImageButton))]
 	[InlineData(typeof(IndicatorView))]
@@ -161,7 +168,7 @@ public class MemoryTests : ControlsHandlerTestBase
 	[InlineData(typeof(Switch))]
 	[InlineData(typeof(TimePicker))]
 	[InlineData(typeof(TableView))]
-	[InlineData(typeof(WebView))]
+	//[InlineData(typeof(WebView))] - This test was moved to MemoryTests.cs inside Appium
 	[InlineData(typeof(CollectionView))]
 	public async Task HandlerDoesNotLeak(Type type)
 	{
@@ -171,6 +178,11 @@ public class MemoryTests : ControlsHandlerTestBase
 		// NOTE: skip certain controls on older Android devices
 		if ((type == typeof(DatePicker) || type == typeof(ListView)) && !OperatingSystem.IsAndroidVersionAtLeast(30))
 				return;
+
+		if (type == typeof(HybridWebView) && !OperatingSystem.IsAndroidVersionAtLeast(24))
+		{
+			return;
+		}
 #endif
 
 #if IOS
@@ -224,6 +236,11 @@ public class MemoryTests : ControlsHandlerTestBase
 				webView.Source = new HtmlWebViewSource { Html = "<p>hi</p>" };
 				await Task.Delay(1000);
 			}
+			else if (view is HybridWebView hybridWebView)
+			{
+				hybridWebView.HybridRoot = "HybridTestRoot";
+				await Task.Delay(1000);
+			}
 			else if (view is TemplatedView templated)
 			{
 				templated.ControlTemplate = new ControlTemplate(() =>
@@ -240,6 +257,61 @@ public class MemoryTests : ControlsHandlerTestBase
 		});
 
 		await AssertionExtensions.WaitForGC(viewReference, handlerReference, platformViewReference);
+	}
+
+	[Fact("CollectionView Header/Footer Doesn't Leak")]
+	public async Task CollectionViewHeaderFooterDoesntLeak()
+	{
+		SetupBuilder();
+
+		WeakReference viewReference = null;
+		WeakReference handlerReference = null;
+		WeakReference controllerReference = null;
+
+		var observable = new ObservableCollection<int> { 1 };
+		var navPage = new NavigationPage(new ContentPage { Title = "Page 1" });
+
+		await CreateHandlerAndAddToWindow(new Window(navPage), async () =>
+		{
+			var cv = new CollectionView
+			{
+				Footer = new VerticalStackLayout(),
+				Header = new VerticalStackLayout(),
+				ItemTemplate = new DataTemplate(() =>
+				{
+					var view = new Label
+					{
+					};
+					view.SetBinding(Label.TextProperty, ".");
+					return view;
+				}),
+				ItemsSource = observable
+			};
+
+			viewReference = new WeakReference(cv);
+			handlerReference = new WeakReference(cv.Handler);
+
+
+			await navPage.Navigation.PushAsync(new ContentPage
+			{
+				Content = cv
+			});
+
+
+#if IOS
+			var controller = (cv.Handler as CollectionViewHandler).Controller;
+			controllerReference = new WeakReference(controller);
+			controller = null;
+#else
+			controllerReference = new WeakReference(new object());
+#endif
+
+			cv = null;
+
+			await navPage.Navigation.PopAsync();
+		});
+
+		await AssertionExtensions.WaitForGC(viewReference, handlerReference, controllerReference);
 	}
 
 	[Theory("Gesture Does Not Leak")]
@@ -355,6 +427,7 @@ public class MemoryTests : ControlsHandlerTestBase
 			new { Name = "One" },
 			new { Name = "Two" },
 			new { Name = "Three" },
+			new { Name = "Four" },
 		};
 
 		var layout = new VerticalStackLayout();
@@ -395,14 +468,14 @@ public class MemoryTests : ControlsHandlerTestBase
 			await CreateHandlerAndAddToWindow<WindowHandlerStub>(new Window(page), async _ =>
 			{
 				await OnLoadedAsync(page);
-				BindableLayout.SetItemsSource(layout, new ObservableCollection<object>(observable));
+				BindableLayout.SetItemsSource(layout, new ObservableCollection<object>(observable.Take(2)));
 				page.Content = null;
 			});
 		}
 
-		// 6 Ellipses total: first 3 should not leak, last 3 should still be in the layout & alive
-		Assert.Equal(6, references.Count);
-		await AssertionExtensions.WaitForGC(references[0], references[1], references[2]);
+		// 4 Ellipses total: last 2 should not leak, first 2 should still be in the layout & alive
+		Assert.Equal(4, references.Count);
+		await AssertionExtensions.WaitForGC(references[2], references[3]);
 	}
 
 	[Fact("Window Does Not Leak")]
@@ -485,5 +558,73 @@ public class MemoryTests : ControlsHandlerTestBase
 		await AssertionExtensions.WaitForGC(viewReference, recognizerReference);
 	}
 #endif
+
+	[Fact]
+	public async Task TweenersWillNotLeakDuringInfiniteAnimation()
+	{
+		SetupBuilder();
+		WeakReference animationReference = null;
+		WeakReference weak = null;
+
+		var page = new NavigationPage(new ContentPage { Title = "Page 1" });
+
+
+		await CreateHandlerAndAddToWindow(new Window(page), async () =>
+		{
+			var page2 = new AnimationPage(shouldCreateClosureAnimation: false);
+			animationReference = new WeakReference(page2);
+			await OnLoadedAsync(page);
+			await page.Navigation.PushAsync(page2);
+			await OnLoadedAsync(page2);
+			weak = page2.Animation;
+			await Task.Delay(2_000);
+			await page2.Navigation.PopToRootAsync();
+			await OnUnloadedAsync(page2);
+			page2 = null;
+		});
+
+		Assert.True(AnimationExtensions.TweenersCounter <= 2);
+	}
+}
+
+sealed class AnimationPage : ContentPage
+{
+	Button CounterBtn { get; } = new();
+
+	public WeakReference Animation { get; private set; }
+
+	bool _shouldCreateClosureAnimation;
+
+	public AnimationPage(bool shouldCreateClosureAnimation) => _shouldCreateClosureAnimation = shouldCreateClosureAnimation;
+
+	void CreateClosureAnimation()
+	{
+		var animation = new Animation(v =>
+		{
+			int r = new Random().Next();
+			CounterBtn.Text = (r).ToString();
+		}, 0, 0);
+		Animation = new WeakReference(animation);
+		animation.Commit(this, "animation", 16, 250, null, null, () => true);
+	}
+
+	void CreateNonClosureAnimatino()
+	{
+		var animation = new Animation(static v =>
+		{
+			int r = new Random().Next();
+		}, 0, 0);
+		Animation = new WeakReference(animation);
+		animation.Commit(this, "animation", 16, 250, null, null, () => true);
+	}
+
+	protected override void OnAppearing()
+	{
+		if (_shouldCreateClosureAnimation)
+			CreateClosureAnimation();
+		else
+			CreateNonClosureAnimatino();
+
+	}
 }
 

@@ -5,12 +5,11 @@ using CoreAnimation;
 using CoreGraphics;
 using Microsoft.Maui.Graphics;
 using Microsoft.Maui.Graphics.Platform;
-using ObjCRuntime;
 using UIKit;
 
 namespace Microsoft.Maui.Platform
 {
-	public class MauiCALayer : CALayer
+	public class MauiCALayer : CALayer, IAutoSizableCALayer
 	{
 		CGRect _bounds;
 		[UnconditionalSuppressMessage("Memory", "MEM0002", Justification = "IShape is a non-NSObject in MAUI.")]
@@ -31,11 +30,38 @@ namespace Microsoft.Maui.Platform
 
 		nfloat _strokeMiterLimit;
 
+		[UnconditionalSuppressMessage("Memory", "MEM0002", Justification = "Proven safe in CALayerAutosizeObserver_DoesNotLeak test.")]
+		CALayerAutosizeObserver? _boundsObserver;
+
 		public MauiCALayer()
 		{
 			_bounds = new CGRect();
-
 			ContentsScale = UIScreen.MainScreen.Scale;
+		}
+
+		protected override void Dispose(bool disposing)
+		{
+			_boundsObserver?.Dispose();
+			_boundsObserver = null;
+			base.Dispose(disposing);
+		}
+
+		public override void RemoveFromSuperLayer()
+		{
+			_boundsObserver?.Dispose();
+			_boundsObserver = null;
+			base.RemoveFromSuperLayer();
+		}
+
+		void IAutoSizableCALayer.AutoSizeToSuperLayer()
+		{
+			_boundsObserver?.Dispose();
+			_boundsObserver = CALayerAutosizeObserver.Attach(this);
+		}
+
+		public override void AddAnimation(CAAnimation animation, string? key)
+		{
+			// Do nothing, we don't want animations here
 		}
 
 		public override void LayoutSublayers()
@@ -313,7 +339,7 @@ namespace Microsoft.Maui.Platform
 
 		void DrawBorder(CGContext ctx)
 		{
-			if (_strokeThickness == 0)
+			if (_strokeThickness <= 0)
 				return;
 
 			if (IsBorderDashed())

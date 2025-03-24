@@ -1,6 +1,6 @@
 //This assumes that this is always running from a mac with global workloads
 const string DotnetToolPathDefault = "/usr/local/share/dotnet/dotnet";
-const string DotnetVersion = "net8.0";
+string DotnetVersion = Argument("targetFrameworkVersion", EnvironmentVariable("TARGET_FRAMEWORK_VERSION") ?? "net9.0");
 const string TestFramework = "net472";
 
 // Map project types to specific subdirectories under artifacts
@@ -12,8 +12,6 @@ var projectMappings = new Dictionary<string, string>
     ["MauiBlazorWebView.DeviceTests"] = "MauiBlazorWebView.DeviceTests",
     ["Essentials.DeviceTests"] = "Essentials.DeviceTests",
     ["Controls.TestCases.HostApp"] = "Controls.TestCases.HostApp",
-    ["Compatibility.ControlGallery.iOS"] = "Compatibility.ControlGallery.iOS",
-    ["Compatibility.ControlGallery.Android"] = "Compatibility.ControlGallery.Android",
 };
 
 string TARGET = Argument("target", "Test");
@@ -21,22 +19,12 @@ string TARGET = Argument("target", "Test");
 string DEFAULT_PROJECT = "";
 string DEFAULT_APP_PROJECT = "";
 
-if (string.Equals(TARGET, "uitest", StringComparison.OrdinalIgnoreCase))
+
+// "uitest", "uitest-build", and "uitest-prepare" all trigger this case
+if (TARGET.StartsWith("uitest", StringComparison.OrdinalIgnoreCase))
 {
     DEFAULT_PROJECT = "../../src/Controls/tests/TestCases.Shared.Tests/Controls.TestCases.Shared.Tests.csproj";
     DEFAULT_APP_PROJECT = "../../src/Controls/tests/TestCases.HostApp/Controls.TestCases.HostApp.csproj";
-}
-
-if (string.Equals(TARGET, "uitest-build", StringComparison.OrdinalIgnoreCase))
-{
-    DEFAULT_PROJECT = "../../src/Controls/tests/TestCases.Shared.Tests/Controls.TestCases.Shared.Tests.csproj";
-    DEFAULT_APP_PROJECT = "../../src/Controls/tests/TestCases.HostApp/Controls.TestCases.HostApp.csproj";
-}
-
-if (string.Equals(TARGET, "cg-uitest", StringComparison.OrdinalIgnoreCase))
-{
-    DEFAULT_PROJECT = "../../src/Compatibility/ControlGallery/test/iOS.UITests/Compatibility.ControlGallery.iOS.UITests.csproj";
-    DEFAULT_APP_PROJECT = "../../src/Compatibility/ControlGallery/src/iOS/Compatibility.ControlGallery.iOS.csproj";
 }
 
 IEnumerable<string> GetTestApplications(string project, string device, string config, string tfm, string rid)
@@ -207,8 +195,18 @@ void LogSetupInfo(string toolPath)
 string GetDotnetToolPath()
 {
     var isLocalDotnet = GetBuildVariable("workloads", "local") == "local";
-    var toolPath = isLocalDotnet ? $"{MakeAbsolute(Directory("../../bin/dotnet/")).ToString()}/dotnet" : DotnetToolPathDefault;
-    Information(isLocalDotnet ? "Using local dotnet" : "Using system dotnet");
+
+    string toolPath = null;
+
+    if (isLocalDotnet)
+    {
+        var ext = IsRunningOnWindows() ? ".exe" : "";
+        var dir = MakeAbsolute(Directory("../../.dotnet/"));
+        toolPath = dir.CombineWithFilePath($"dotnet{ext}").FullPath;
+    }
+
+    Information($"Using {(isLocalDotnet ? "local" : "system")} dotnet: {toolPath ?? "<null>"}");
+    
     return toolPath;
 }
 
